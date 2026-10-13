@@ -16,10 +16,12 @@ class NozzleReading(Document):
 		closing_reading: DF.Float
 		item: DF.Link | None
 		nozzle: DF.Link
+		opening_override_reason: DF.SmallText | None
 		opening_reading: DF.Float
 		parent: DF.Data
 		parentfield: DF.Data
 		parenttype: DF.Data
+		previous_closing: DF.Float
 		rate: DF.Currency
 		sale_amount: DF.Currency
 		sale_litres: DF.Float

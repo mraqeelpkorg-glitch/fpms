@@ -33,6 +33,28 @@ FPMS_CUSTOM_FIELDS = {
 			"print_hide": 1,
 		}
 	],
+	"Payment Entry": [
+		{
+			"fieldname": "fpms_shift",
+			"label": "FPMS Shift Reconciliation",
+			"fieldtype": "Link",
+			"options": "Shift Reconciliation",
+			"insert_after": "company",
+			"read_only": 1,
+			"print_hide": 1,
+		}
+	],
+	"Journal Entry": [
+		{
+			"fieldname": "fpms_shift",
+			"label": "FPMS Shift Reconciliation",
+			"fieldtype": "Link",
+			"options": "Shift Reconciliation",
+			"insert_after": "company",
+			"read_only": 1,
+			"print_hide": 1,
+		}
+	],
 	"Item": [
 		{
 			"fieldname": "fpms_is_fuel",

@@ -6,6 +6,9 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt
 
+OVERRIDE_ROLES = {"FPMS Manager", "System Manager"}
+EPS = 0.005
+
 from fpms.events.pricing import get_effective_price
 
 
@@ -45,15 +48,21 @@ class ShiftReconciliation(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		self.set_opening_readings()
 		self.calculate_readings()
 		self.calculate_credit_sales()
 		self.calculate_totals()
 		self.set_variance()
 		self.set_status()
 
+	def before_submit(self):
+		self.validate_posting_prerequisites()
+
 	def on_submit(self):
 		self.create_credit_invoices()
 		self.create_cash_sales_invoice()
+		self.create_payment_entries()
+		self.post_variance_entry()
 		self.db_set("status", self._status_value())
 
 	def on_cancel(self):
@@ -127,6 +136,71 @@ class ShiftReconciliation(Document):
 	def _status_value(self):
 		return {0: "Draft", 1: "Submitted", 2: "Cancelled"}[self.docstatus]
 
+
+	# ------------------------------------------------------------ nozzle openings
+
+	def set_opening_readings(self):
+		"""Opening = the nozzle's last submitted closing. Only a manager may override, with a reason."""
+		for row in self.reading_details:
+			if not row.nozzle:
+				continue
+
+			previous = get_previous_closing(row.nozzle, exclude=self.name)
+			old_previous = flt(row.get("previous_closing"))
+			row.previous_closing = flt(previous) if previous is not None else 0
+
+			if previous is None:
+				continue  # first reading ever recorded for this nozzle: opening is entered by hand
+
+			opening = flt(row.opening_reading)
+			if not opening or abs(opening - old_previous) < 0.0005:
+				row.opening_reading = previous  # untouched by the user: keep following the chain
+				continue
+
+			if abs(opening - flt(previous)) < 0.0005:
+				continue
+
+			if not (OVERRIDE_ROLES & set(frappe.get_roles())):
+				frappe.throw(
+					_("Row #{0}: opening reading {1} for nozzle {2} must equal the previous closing {3}.").format(
+						row.idx, opening, row.nozzle, previous
+					)
+				)
+			if not (row.get("opening_override_reason") or "").strip():
+				frappe.throw(
+					_("Row #{0}: enter an Opening Override Reason to use {1} instead of the previous closing {2}.").format(
+						row.idx, opening, previous
+					)
+				)
+
+	# ------------------------------------------------------------ settlement setup
+
+	def _company(self):
+		company = None
+		if self.pos_profile:
+			company = frappe.db.get_value("POS Profile", self.pos_profile, "company")
+		return (
+			frappe.db.get_single_value("Fuel Pump Settings", "default_company")
+			or company
+			or frappe.defaults.get_global_default("company")
+		)
+
+	def validate_posting_prerequisites(self):
+		"""Refuse to submit when the money cannot be posted."""
+		settings = frappe.get_doc("Fuel Pump Settings")
+		if self.variance_status == "Shortage" and not settings.shortage_account:
+			frappe.throw(_("Set the Shortage Account in Fuel Pump Settings before submitting a shift with a shortage."))
+		if self.variance_status == "Excess" and not settings.excess_account:
+			frappe.throw(_("Set the Excess Account in Fuel Pump Settings before submitting a shift with an excess."))
+
+		company = self._company()
+		for row in self.payment_details:
+			if flt(row.amount) <= 0:
+				continue
+			if not row.mode_of_payment:
+				frappe.throw(_("Payment row #{0} has no Mode of Payment.").format(row.idx))
+			_mode_account(row.mode_of_payment, company)
+
 	# ------------------------------------------------------------------ postings
 
 	def _resolve_customer(self):
@@ -139,6 +213,7 @@ class ShiftReconciliation(Document):
 	def _new_fuel_invoice(self, customer, update_stock=1):
 		invoice = frappe.new_doc("Sales Invoice")
 		invoice.customer = customer
+		invoice.company = self._company()
 		invoice.posting_date = self.shift_date
 		invoice.set_posting_time = 1
 		invoice.update_stock = update_stock
@@ -217,8 +292,122 @@ class ShiftReconciliation(Document):
 				cash[key] = {"qty": qty, "rate": data["rate"]}
 		return cash
 
+
+	def create_payment_entries(self):
+		"""Post the cash collected: one Payment Entry per payment row against the cash invoice.
+
+		Whatever the invoice cannot absorb (collected more than billed) is kept in ``_excess``
+		for the variance Journal Entry.
+		"""
+		self._excess = []
+		rows = [p for p in self.payment_details if flt(p.amount) > 0]
+		if not rows:
+			return
+
+		invoice = frappe.get_doc("Sales Invoice", self.sales_invoice) if self.sales_invoice else None
+		company = invoice.company if invoice else self._company()
+		remaining = flt(invoice.outstanding_amount, 2) if invoice else 0.0
+
+		for row in rows:
+			account = _mode_account(row.mode_of_payment, company)
+			amount = flt(row.amount, 2)
+			allocated = min(amount, remaining) if invoice else 0.0
+			if allocated > EPS:
+				self._make_payment_entry(invoice, row, account, allocated)
+				remaining = flt(remaining - allocated, 2)
+			extra = flt(amount - allocated, 2)
+			if extra > EPS:
+				self._excess.append((account, extra))
+
+	def _make_payment_entry(self, invoice, row, account, amount):
+		pe = frappe.new_doc("Payment Entry")
+		pe.payment_type = "Receive"
+		pe.company = invoice.company
+		pe.posting_date = self.shift_date
+		pe.mode_of_payment = row.mode_of_payment
+		pe.party_type = "Customer"
+		pe.party = invoice.customer
+		pe.paid_from = invoice.debit_to
+		pe.paid_to = account
+		pe.paid_from_account_currency = invoice.party_account_currency
+		pe.paid_to_account_currency = frappe.get_cached_value("Account", account, "account_currency")
+		pe.paid_amount = amount
+		pe.received_amount = amount
+		pe.source_exchange_rate = 1
+		pe.target_exchange_rate = 1
+		pe.reference_no = row.reference or self.name
+		pe.reference_date = self.shift_date
+		pe.remarks = _("Cash collected for shift {0}").format(self.name)
+		pe.fpms_shift = self.name
+		pe.append(
+			"references",
+			{"reference_doctype": "Sales Invoice", "reference_name": invoice.name, "allocated_amount": amount},
+		)
+		pe.flags.ignore_permissions = True
+		pe.insert()
+		pe.submit()
+		return pe
+
+	def post_variance_entry(self):
+		"""Book a shortage or excess to its Fuel Pump Settings account via a Journal Entry."""
+		if self.variance_status == "Balanced":
+			return
+
+		settings = frappe.get_doc("Fuel Pump Settings")
+		invoice = frappe.get_doc("Sales Invoice", self.sales_invoice) if self.sales_invoice else None
+		company = invoice.company if invoice else self._company()
+		lines = []
+
+		if self.variance_status == "Shortage":
+			outstanding = flt(frappe.db.get_value("Sales Invoice", self.sales_invoice, "outstanding_amount"), 2) if invoice else 0.0
+			amount = min(outstanding, abs(flt(self.variance_amount, 2)))
+			if amount > EPS:
+				shortage = {"account": settings.shortage_account, "debit_in_account_currency": amount}
+				if self.employee and _is_party_account(settings.shortage_account):
+					shortage.update({"party_type": "Employee", "party": self.employee})
+				lines.append(shortage)
+				lines.append(
+					{
+						"account": invoice.debit_to,
+						"party_type": "Customer",
+						"party": invoice.customer,
+						"credit_in_account_currency": amount,
+						"reference_type": "Sales Invoice",
+						"reference_name": invoice.name,
+					}
+				)
+		else:
+			for account, extra in getattr(self, "_excess", []):
+				lines.append({"account": account, "debit_in_account_currency": extra})
+				lines.append({"account": settings.excess_account, "credit_in_account_currency": extra})
+
+		if not lines:
+			return
+
+		remark = _("{0} for shift {1}").format(_(self.variance_status), self.name)
+		if self.employee:
+			remark += _(" (employee {0})").format(self.employee)
+
+		je = frappe.new_doc("Journal Entry")
+		je.voucher_type = "Journal Entry"
+		je.company = company
+		je.posting_date = self.shift_date
+		je.user_remark = remark
+		je.fpms_shift = self.name
+		for line in lines:
+			je.append("accounts", line)
+		je.flags.ignore_permissions = True
+		je.insert()
+		je.submit()
+
 	def cancel_linked_documents(self):
-		"""Cancel every Sales Invoice this shift created (cash + per-customer credit)."""
+		"""Cancel everything this shift posted: variance JE, payments, then the invoices."""
+		for doctype in ("Journal Entry", "Payment Entry"):
+			for name in frappe.get_all(doctype, filters={"fpms_shift": self.name, "docstatus": 1}, pluck="name"):
+				doc = frappe.get_doc(doctype, name)
+				doc.flags.ignore_permissions = True
+				doc.cancel()
+
 		invoices = frappe.get_all(
 			"Sales Invoice",
 			filters={"fpms_shift": self.name, "docstatus": 1},
@@ -265,3 +454,40 @@ def _append_fuel_lines(invoice, lines):
 				"warehouse": warehouse,
 			},
 		)
+
+
+def get_previous_closing(nozzle, exclude=None):
+	"""Closing reading of the nozzle's most recent submitted Shift Reconciliation, or None."""
+	rows = frappe.db.sql(
+		"""
+		SELECT nr.closing_reading
+		FROM `tabNozzle Reading` nr
+		JOIN `tabShift Reconciliation` sr ON sr.name = nr.parent AND nr.parenttype = 'Shift Reconciliation'
+		WHERE nr.nozzle = %(nozzle)s AND sr.docstatus = 1 AND sr.name != %(exclude)s
+		ORDER BY sr.shift_date DESC, sr.shift_start_time DESC, sr.creation DESC
+		LIMIT 1
+		""",
+		{"nozzle": nozzle, "exclude": exclude or ""},
+	)
+	return flt(rows[0][0]) if rows else None
+
+
+@frappe.whitelist()
+def get_nozzle_previous_closing(nozzle, exclude=None):
+	frappe.has_permission("Shift Reconciliation", "read", throw=True)
+	return get_previous_closing(nozzle, exclude)
+
+
+def _mode_account(mode_of_payment, company):
+	account = frappe.db.get_value(
+		"Mode of Payment Account", {"parent": mode_of_payment, "company": company}, "default_account"
+	)
+	if not account:
+		frappe.throw(
+			_("Set a default account for Mode of Payment {0} and company {1}.").format(mode_of_payment, company)
+		)
+	return account
+
+
+def _is_party_account(account):
+	return frappe.db.get_value("Account", account, "account_type") in ("Receivable", "Payable")

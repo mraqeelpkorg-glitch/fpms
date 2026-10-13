@@ -8,7 +8,9 @@
  "field_order": [
   "nozzle",
   "item",
+  "previous_closing",
   "opening_reading",
+  "opening_override_reason",
   "closing_reading",
   "testing_litres",
   "sale_litres",
@@ -34,13 +36,29 @@
    "read_only": 1
   },
   {
+   "fieldname": "previous_closing",
+   "fieldtype": "Float",
+   "label": "Previous Closing",
+   "precision": "3",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
    "columns": 1,
    "default": "0",
    "fieldname": "opening_reading",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Opening Reading",
-   "precision": "3"
+   "precision": "3",
+   "read_only_depends_on": "eval:flt(doc.previous_closing) > 0 && !frappe.user_roles.includes('FPMS Manager') && !frappe.user_roles.includes('System Manager')"
+  },
+  {
+   "fieldname": "opening_override_reason",
+   "fieldtype": "Small Text",
+   "label": "Opening Override Reason",
+   "depends_on": "eval:flt(doc.previous_closing) > 0 && flt(doc.opening_reading) != flt(doc.previous_closing)",
+   "description": "Required when the opening differs from the previous closing (FPMS Manager only)."
   },
   {
    "columns": 1,
