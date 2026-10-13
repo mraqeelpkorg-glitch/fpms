@@ -276,8 +276,19 @@ def after_install():
 	ensure_tax_templates()
 
 
+def ensure_dashboard():
+	"""Frappe's migrate does not sync standard Dashboard records, so import ours explicitly."""
+	from frappe.modules.import_file import import_file_by_path
+
+	path = frappe.get_app_path(
+		"fpms", "fuel_pump_management_system", "dashboard", "fuel_pump", "fuel_pump.json"
+	)
+	import_file_by_path(path, force=True)
+
+
 def after_migrate():
 	ensure_roles()
 	ensure_custom_fields()
 	ensure_charge_types()
 	ensure_charge_accounts()
+	ensure_dashboard()
