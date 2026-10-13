@@ -78,7 +78,20 @@ class TestShiftReconciliation(IntegrationTestCase):
 
 	@classmethod
 	def _make_price(cls):
-		price_list = frappe.db.get_value("Price List", {"selling": 1, "enabled": 1}, "name")
+		currency = frappe.get_cached_value("Company", cls.company, "default_currency")
+		price_list = frappe.db.get_value(
+			"Price List", {"selling": 1, "enabled": 1, "currency": currency}, "name"
+		)
+		if not price_list:
+			price_list = frappe.get_doc(
+				{
+					"doctype": "Price List",
+					"price_list_name": "FPMS Test Selling",
+					"currency": currency,
+					"selling": 1,
+					"enabled": 1,
+				}
+			).insert().name
 		frappe.get_doc(
 			{
 				"doctype": "Item Price",

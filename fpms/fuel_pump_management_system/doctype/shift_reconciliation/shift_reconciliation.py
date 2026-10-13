@@ -214,6 +214,10 @@ class ShiftReconciliation(Document):
 		invoice = frappe.new_doc("Sales Invoice")
 		invoice.customer = customer
 		invoice.company = self._company()
+		invoice.currency = frappe.get_cached_value("Company", invoice.company, "default_currency")
+		price_list = self._price_list()
+		if price_list:
+			invoice.selling_price_list = price_list
 		invoice.posting_date = self.shift_date
 		invoice.set_posting_time = 1
 		invoice.update_stock = update_stock
