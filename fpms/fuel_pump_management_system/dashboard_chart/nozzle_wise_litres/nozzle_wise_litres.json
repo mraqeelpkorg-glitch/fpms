@@ -1,0 +1,29 @@
+{
+ "chart_name": "Nozzle-wise Litres",
+ "chart_type": "Report",
+ "color": "#2490EF",
+ "creation": "2026-10-13 23:50:00.000000",
+ "docstatus": 0,
+ "doctype": "Dashboard Chart",
+ "filters_json": "{\"group_by\": \"Nozzle\"}",
+ "idx": 0,
+ "is_public": 1,
+ "is_standard": 1,
+ "modified": "2026-10-13 23:50:00.000000",
+ "modified_by": "Administrator",
+ "module": "Fuel Pump Management System",
+ "name": "Nozzle-wise Litres",
+ "owner": "Administrator",
+ "report_name": "Nozzle Sales",
+ "type": "Bar",
+ "x_field": "nozzle",
+ "y_axis": [
+  {
+   "color": "#2490EF",
+   "doctype": "Dashboard Chart Field",
+   "parentfield": "y_axis",
+   "parenttype": "Dashboard Chart",
+   "y_field": "sale_litres"
+  }
+ ]
+}

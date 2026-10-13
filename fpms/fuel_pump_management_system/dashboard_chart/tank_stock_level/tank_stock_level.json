@@ -1,0 +1,29 @@
+{
+ "chart_name": "Tank Stock Level",
+ "chart_type": "Report",
+ "color": "#ECAD4B",
+ "creation": "2026-10-13 23:50:00.000000",
+ "docstatus": 0,
+ "doctype": "Dashboard Chart",
+ "filters_json": "{}",
+ "idx": 0,
+ "is_public": 1,
+ "is_standard": 1,
+ "modified": "2026-10-13 23:50:00.000000",
+ "modified_by": "Administrator",
+ "module": "Fuel Pump Management System",
+ "name": "Tank Stock Level",
+ "owner": "Administrator",
+ "report_name": "Tank Stock",
+ "type": "Bar",
+ "x_field": "tank",
+ "y_axis": [
+  {
+   "color": "#ECAD4B",
+   "doctype": "Dashboard Chart Field",
+   "parentfield": "y_axis",
+   "parenttype": "Dashboard Chart",
+   "y_field": "stock_litres"
+  }
+ ]
+}

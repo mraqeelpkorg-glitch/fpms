@@ -332,3 +332,50 @@ class TestShiftReconciliation(IntegrationTestCase):
 		doc = self._shift(nozzle, opening=1050, closing=1150, reason="Totalizer replaced after repair")
 		doc.insert()
 		self.assertEqual(flt(doc.reading_details[0].opening_reading), 1050)
+
+	# ------------------------------------------------------------------ dashboard reports
+
+	def _nozzle_sales(self, **filters):
+		from fpms.fuel_pump_management_system.report.nozzle_sales.nozzle_sales import execute
+
+		filters.setdefault("from_date", nowdate())
+		filters.setdefault("to_date", nowdate())
+		return execute(filters)
+
+	def test_nozzle_sales_report_detail_and_grouped(self):
+		nozzle = self._nozzle()
+		self._submit(nozzle, payments=[10000])
+
+		_cols, data, _msg, chart = self._nozzle_sales(nozzle=nozzle)
+		self.assertEqual(len(data), 1)
+		self.assertEqual(flt(data[0].sale_litres), 100)
+		self.assertEqual(flt(data[0].sale_amount), 10000)
+		self.assertEqual(chart["data"]["labels"], [nozzle])
+
+		_cols, grouped, _msg, _chart = self._nozzle_sales(nozzle=nozzle, group_by="Nozzle")
+		self.assertEqual(len(grouped), 1)
+		self.assertEqual(grouped[0].shifts, 1)
+		self.assertEqual(flt(grouped[0].sale_litres), 100)
+
+	def test_nozzle_sales_report_ignores_draft_shifts(self):
+		nozzle = self._nozzle()
+		self._shift(nozzle).insert()
+		_cols, data, _msg, chart = self._nozzle_sales(nozzle=nozzle)
+		self.assertEqual(data, [])
+		self.assertIsNone(chart)
+
+	def test_nozzle_sales_report_defaults_to_this_month(self):
+		from fpms.fuel_pump_management_system.report.nozzle_sales.nozzle_sales import execute
+
+		nozzle = self._nozzle()
+		self._submit(nozzle, payments=[10000])
+		_cols, data, _msg, _chart = execute({"nozzle": nozzle})
+		self.assertEqual(len(data), 1)
+
+	def test_tank_stock_report_matches_bin(self):
+		from fpms.fuel_pump_management_system.report.tank_stock.tank_stock import execute
+
+		_cols, data, _msg, _chart = execute({})
+		row = next(r for r in data if r.tank == self.tank)
+		bin_qty = frappe.db.get_value("Bin", {"warehouse": self.warehouse, "item_code": ITEM}, "actual_qty")
+		self.assertEqual(flt(row.stock_litres), flt(bin_qty))
