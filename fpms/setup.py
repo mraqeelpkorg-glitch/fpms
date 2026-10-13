@@ -134,6 +134,10 @@ def ensure_charge_types():
 			):
 				frappe.db.set_value("Fuel Charge Type", name, "company", default_company)
 
+	if company_field and company_field.reqd and not default_company:
+		# No Company yet (fresh site, before setup wizard): seed on after_migrate instead.
+		return
+
 	names = set(FPMS_CHARGE_TYPES)
 	for child in ("Fuel Price Component", "Fuel Purchase Charge"):
 		if frappe.db.has_column(child, "component"):
